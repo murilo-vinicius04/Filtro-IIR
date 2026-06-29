@@ -1,0 +1,472 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{siunitx}
+
+% Notação numérica brasileira: vírgula decimal na saída, ponto na entrada.
+\sisetup{output-decimal-marker={,}, group-separator={.}, detect-all}
+
+% As figuras são geradas pelo script e ficam na raiz do projeto.
+\graphicspath{{../}}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  language=Python,
+  showstringspaces=false,
+  columns=fullflexible
+}
+
+\begin{document}
+
+\title{Projeto de Filtros IIR para Atenuação de Ruído de\\
+Medição em Sinais de Corrente de Planta Industrial}
+
+\author{\IEEEauthorblockN{Grupo B9}
+\IEEEauthorblockA{SEL0615 -- Processamento Digital de Sinais\\
+Escola de Engenharia de São Carlos (EESC), Universidade de São Paulo (USP)\\
+São Carlos, SP, Brasil}}
+
+\maketitle
+
+\begin{abstract}
+Este trabalho aborda a atenuação do ruído de medição em um sinal de corrente
+amostrado no ponto de conexão de uma planta industrial com a rede de média
+tensão. Projetaram-se filtros digitais de resposta infinita ao impulso (IIR)
+nas quatro aproximações clássicas (Butterworth, Chebyshev tipo I, Chebyshev
+tipo II e elíptica), realizadas em seções de segunda ordem (SOS) para garantir
+estabilidade numérica. Uma busca em grade sobre tipo, ordem, frequência de corte
+e estratégia de filtragem (fase zero \emph{versus} causal) selecionou os
+parâmetros que minimizam o erro quadrático médio (RMSE) em relação ao sinal de
+referência, levando em conta o custo computacional associado à ordem. A melhor
+configuração foi um filtro Chebyshev tipo II de ordem~3 com frequência de corte
+de \SI{2300}{\hertz}, obtendo RMSE de \num{0.3207} (redução de
+\SI{46.2}{\percent} em relação ao sinal ruidoso) e ganho de relação
+sinal-ruído de \SI{5.4}{\decibel}. A análise de custo \emph{versus} ordem
+mostra que ordens superiores a~3 não trazem ganho de qualidade, apenas custo.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Filtros IIR, processamento digital de sinais, RMSE, qualidade de energia,
+harmônicos, seções de segunda ordem.
+\end{IEEEkeywords}
+
+\section{Introdução}
+\IEEEPARstart{E}{m} instalações industriais é comum a operação de cargas
+elétricas não lineares, como retificadores, inversores e \emph{drives} de
+acionamento de motores, que demandam correntes ricas em componentes
+harmônicas. No início do expediente a planta opera apenas com cargas lineares
+(RLC) e, em determinados instantes, ocorre o chaveamento das cargas não
+lineares, alterando o conteúdo espectral da corrente medida.
+
+Um medidor instalado no ponto de conexão registra a corrente de uma das fases a
+uma taxa de \num{128} amostras por ciclo. Como a frequência fundamental da rede
+é \SI{60}{\hertz}, a frequência de amostragem do sistema é
+\begin{equation}
+f_s = 128 \times \SI{60}{\hertz} = \SI{7680}{\hertz}.
+\end{equation}
+
+O sinal registrado encontra-se contaminado por ruído de medição. Cabe ao
+\textbf{Grupo B9} projetar e aplicar \textbf{filtros IIR} ao sinal ruidoso, de
+modo a \textbf{minimizar o RMSE} em relação ao sinal de referência (sem ruído),
+testando diferentes ordens e parâmetros e considerando o custo computacional ao
+dimensionar a ordem do filtro. A rotina deve ser implementada como uma função
+aplicável a sinais de qualquer comprimento.
+
+Este relatório está organizado da seguinte forma. A
+Seção~\ref{sec:teoria} apresenta a fundamentação teórica sobre filtros IIR. A
+Seção~\ref{sec:metodo} descreve a metodologia de projeto, busca de parâmetros e
+avaliação. A Seção~\ref{sec:resultados} discute os resultados, e a
+Seção~\ref{sec:conclusao} conclui o trabalho.
+
+\section{Fundamentação Teórica}
+\label{sec:teoria}
+
+\subsection{Filtros IIR e Transformação Bilinear}
+Um filtro IIR é descrito por uma equação de diferenças recursiva~\cite{oppenheim},
+cuja função de transferência no domínio~$z$ é uma razão de polinômios:
+\begin{equation}
+H(z) = \frac{\sum_{k=0}^{M} b_k\,z^{-k}}{1 + \sum_{k=1}^{N} a_k\,z^{-k}}.
+\label{eq:Hz}
+\end{equation}
+A recursividade (presença de polos) permite obter respostas seletivas com ordens
+baixas, ao custo de exigir verificação de estabilidade: todos os polos devem
+estar no interior do círculo unitário, $|p_i| < 1$. O projeto parte de um
+protótipo analógico passa-baixas, mapeado para o domínio discreto pela
+\emph{transformação bilinear}
+\begin{equation}
+s = \frac{2}{T}\,\frac{1 - z^{-1}}{1 + z^{-1}},
+\end{equation}
+que preserva a estabilidade, mas introduz distorção de frequência
+(\emph{warping}), compensada por pré-distorção (\emph{prewarping}) na frequência
+de corte. As rotinas utilizadas executam esse procedimento internamente.
+
+\subsection{Aproximações Clássicas}
+Quatro aproximações clássicas foram consideradas~\cite{proakis}, com compromissos
+distintos entre seletividade, planura e ondulação:
+\begin{itemize}
+  \item \textbf{Butterworth}: resposta maximamente plana na banda de passagem,
+        sem ondulação; transição suave.
+  \item \textbf{Chebyshev tipo I}: ondulação controlada na banda de passagem em
+        troca de transição mais abrupta.
+  \item \textbf{Chebyshev tipo II}: banda de passagem plana e ondulação confinada
+        à banda de rejeição, com zeros de transmissão que produzem \emph{notches}.
+  \item \textbf{Elíptica}: ondulação em ambas as bandas, oferecendo a maior
+        seletividade para uma dada ordem.
+\end{itemize}
+
+\subsection{Filtragem Causal \emph{versus} Fase Zero}
+A filtragem direta (\emph{causal}) introduz atraso de fase dependente da
+frequência, deformando a forma de onda. Em processamento \emph{offline}, a
+filtragem de \textbf{fase zero} aplica o filtro duas vezes, nos sentidos direto e
+reverso, cancelando o atraso de fase e dobrando a atenuação efetiva~\cite{gustafsson}.
+Ambas as estratégias foram avaliadas: a causal por ser realizável em tempo real e a de
+fase zero por sua superioridade em aplicações \emph{offline}.
+
+\subsection{Realização em Seções de Segunda Ordem (SOS)}
+Para ordens elevadas, a forma direta~\eqref{eq:Hz} é numericamente mal
+condicionada, com risco de instabilidade por erro de arredondamento dos
+coeficientes. Adotou-se, portanto, a realização em \textbf{seções de segunda
+ordem} (cascata de biquads), substancialmente mais robusta e padrão na prática de
+engenharia.
+
+\subsection{Métricas de Avaliação}
+A qualidade da filtragem é medida pelo \textbf{erro quadrático médio}
+\begin{equation}
+\mathrm{RMSE} = \sqrt{\frac{1}{L}\sum_{n=0}^{L-1}
+\bigl(x[n] - \hat{x}[n]\bigr)^2},
+\label{eq:rmse}
+\end{equation}
+onde $x$ é o sinal de referência e $\hat{x}$ o sinal filtrado. Complementarmente,
+o \textbf{ganho de relação sinal-ruído} quantifica a melhoria em decibéis:
+\begin{equation}
+\Delta\mathrm{SNR} = 10\log_{10}\!\frac{\sum x^2}{\sum (\hat{x}-x)^2}
+                   - 10\log_{10}\!\frac{\sum x^2}{\sum (x_{\text{ruído}}-x)^2}.
+\label{eq:snr}
+\end{equation}
+
+\section{Metodologia}
+\label{sec:metodo}
+
+\subsection{Caracterização do Sinal}
+O sinal do Grupo~B9 possui \num{1537} amostras (\SI{0.20}{\second} a
+\SI{7680}{\hertz}). A análise espectral (Fig.~\ref{fig:espectro}) revela a
+componente fundamental em \SI{60}{\hertz} e conteúdo harmônico, com destaque para
+a $5^{\text{a}}$ harmônica próxima de \SI{300}{\hertz}, coerente com a presença de
+cargas não lineares. O instante de chaveamento das cargas não lineares foi
+localizado em torno da amostra~385 ($t \approx \SI{0.05}{\second}$), a partir da
+maior variação abrupta da envoltória do sinal; a filtragem proposta preserva esse
+transitório.
+
+\subsection{Conteúdo Harmônico e Distorção Total}
+A análise espectral da janela pós-chaveamento (nove ciclos da fundamental,
+\num{1152} amostras, fazendo cada harmônica recair exatamente sobre um bin da
+FFT) quantifica a assinatura das cargas não lineares. A
+Tabela~\ref{tab:harmonicos} lista as componentes mais significativas.
+
+\begin{table}[!t]
+\caption{Componentes harmônicas na região pós-chaveamento}
+\label{tab:harmonicos}
+\centering
+\begin{tabular}{cccc}
+\toprule
+Harmônica & Frequência (Hz) & Amplitude (A) & \% da fundamental \\
+\midrule
+1ª (fund.) & 60  & 32,30 & 100,00 \\
+3ª  & 180 & 0,89  & 2,76 \\
+5ª  & 300 & 4,29  & 13,29 \\
+7ª  & 420 & 0,85  & 2,62 \\
+11ª & 660 & 1,29  & 4,01 \\
+13ª & 780 & 0,54  & 1,67 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O espectro é dominado por harmônicas ímpares não múltiplas de três
+(5ª, 7ª, 11ª e 13ª), padrão típico de retificadores trifásicos de seis pulsos,
+cujas correntes contêm as ordens $h = 6k \pm 1$. A baixa amplitude da 3ª harmônica
+e de suas múltiplas (componentes homopolares) é coerente com um sistema trifásico
+equilibrado a três fios. A distorção harmônica total de corrente,
+\begin{equation}
+\mathrm{THD}_i = \frac{\sqrt{\sum_{h \ge 2} I_h^2}}{I_1}\times 100\%,
+\label{eq:thd}
+\end{equation}
+atinge \SI{14.5}{\percent} nessa região, valor próximo dos limites recomendados
+pela norma IEEE~519~\cite{ieee519} e que justifica o tratamento do sinal. O filtro
+passa-baixas deve, assim, remover o ruído de medição de alta frequência
+preservando a fundamental e as harmônicas de baixa ordem inerentes ao processo.
+
+\subsection{Implementação da Função de Filtragem}
+A filtragem foi implementada em Python (bibliotecas \texttt{numpy} e
+\texttt{scipy.signal}~\cite{scipy}) como uma função genérica, aplicável a qualquer
+comprimento de sinal:
+
+\begin{lstlisting}
+def aplicar_filtro_iir(sinal, fs, f_corte, ordem,
+                       tipo='butter', rp=0.5, rs=40.0,
+                       fase_zero=True):
+    Wn = f_corte / (0.5 * fs)
+    sos = projetar_sos(tipo, ordem, Wn, rp, rs)
+    if fase_zero:
+        return signal.sosfiltfilt(sos, sinal), sos
+    return signal.sosfilt(sos, sinal), sos
+\end{lstlisting}
+
+O projeto retorna os coeficientes em formato SOS; a filtragem de fase zero usa
+\texttt{sosfiltfilt} e a causal, \texttt{sosfilt}. A frequência de corte é
+normalizada pela frequência de Nyquist ($f_s/2$).
+
+\subsection{Busca em Grade e Critério de Estabilidade}
+Para determinar os parâmetros ótimos, varreu-se uma grade de
+\begin{itemize}
+  \item \textbf{tipo}: \{Butterworth, Chebyshev~I, Chebyshev~II, elíptico\};
+  \item \textbf{ordem}: de~1 a~8;
+  \item \textbf{frequência de corte}: de \SIrange{300}{3300}{\hertz}, em passos
+        de \SI{100}{\hertz};
+  \item \textbf{método}: fase zero e causal.
+\end{itemize}
+Cada configuração foi submetida a uma verificação de estabilidade (todos os
+polos com $|p_i|<1$, obtidos de \texttt{sos2zpk}) e descartada se instável.
+Foram avaliadas \num{1984} configurações estáveis, ordenadas pelo RMSE da
+Eq.~\eqref{eq:rmse}.
+
+\subsection{Avaliação do Custo Computacional}
+O custo foi medido cronometrando o \emph{pipeline} completo (projeto dos
+coeficientes mais filtragem) e reportando a \textbf{mediana} de \num{50}
+execuções, robusta à variabilidade de escalonamento do sistema operacional. A
+ordem do filtro foi então variada com tipo e corte fixos, evidenciando o
+compromisso entre RMSE e tempo de execução.
+
+\section{Resultados e Discussão}
+\label{sec:resultados}
+
+\subsection{Melhor Configuração por Aproximação}
+A Tabela~\ref{tab:tipos} resume, para cada aproximação, a melhor configuração de
+fase zero encontrada. Partindo de um RMSE inicial de \num{0.5961} (sinal
+ruidoso), todas as aproximações reduziram o erro para a faixa de
+\numrange{0.32}{0.36}. O melhor resultado global foi do \textbf{Chebyshev
+tipo~II de ordem~3} com $f_c = \SI{2300}{\hertz}$, com RMSE de \num{0.3207}
+(redução de \SI{46.2}{\percent}) e $\Delta\mathrm{SNR}$ de
+\SI{5.4}{\decibel}. O Butterworth de ordem~3 ($f_c=\SI{1100}{\hertz}$) obteve
+desempenho praticamente equivalente (RMSE \num{0.3210}) com menor custo, sendo
+uma alternativa atraente pela resposta maximamente plana.
+
+\begin{table}[!t]
+\caption{Melhor configuração de fase zero por aproximação}
+\label{tab:tipos}
+\centering
+\begin{tabular}{lccccc}
+\toprule
+Aproximação & Ordem & $f_c$ (Hz) & RMSE & $\Delta$SNR (dB) & $t$ (ms) \\
+\midrule
+Butterworth    & 3 & 1100 & 0,3210 & 5,4 & 2,83 \\
+Chebyshev I    & 1 & 600  & 0,3602 & 4,4 & 1,90 \\
+\textbf{Chebyshev II} & \textbf{3} & \textbf{2300} & \textbf{0,3207} & \textbf{5,4} & 3,12 \\
+Elíptico       & 1 & 600  & 0,3602 & 4,4 & 1,88 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A Fig.~\ref{fig:tempo} compara, no domínio do tempo, o melhor filtro de cada
+aproximação com os sinais de referência e ruidoso, destacando (com ★) a
+configuração global vencedora.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{resultado_filtros_iir_b9.png}
+\caption{Comparação no domínio do tempo da melhor configuração de cada
+aproximação (fase zero).}
+\label{fig:tempo}
+\end{figure}
+
+\subsection{Funções de Transferência e Estabilidade}
+As duas melhores configurações de fase zero, ambas de ordem~3, possuem as funções
+de transferência discretas
+\begin{equation}
+H_{\text{But}}(z) = \frac{0{,}0443 + 0{,}1328\,z^{-1} + 0{,}1328\,z^{-2} + 0{,}0443\,z^{-3}}
+{1 - 1{,}2420\,z^{-1} + 0{,}7486\,z^{-2} - 0{,}1524\,z^{-3}},
+\label{eq:hbut}
+\end{equation}
+\begin{equation}
+H_{\text{Ch2}}(z) = \frac{0{,}0588 + 0{,}1094\,z^{-1} + 0{,}1094\,z^{-2} + 0{,}0588\,z^{-3}}
+{1 - 1{,}2983\,z^{-1} + 0{,}7969\,z^{-2} - 0{,}1624\,z^{-3}}.
+\label{eq:hch2}
+\end{equation}
+O filtro Butterworth tem polos em $0{,}447 \pm j0{,}487$ e $0{,}349$, com módulo
+máximo $|p|_{\max} = 0{,}661$; o Chebyshev~II, em $0{,}475 \pm j0{,}490$ e
+$0{,}348$, com $|p|_{\max} = 0{,}683$. Como todos os polos têm módulo inferior à
+unidade, ambos são estáveis no sentido BIBO. Os três zeros do Butterworth
+coincidem em $z = -1$, ao passo que o Chebyshev~II posiciona um par de zeros sobre
+o círculo unitário ($-0{,}430 \pm j0{,}903$), criando os \emph{notches} de
+transmissão característicos dessa aproximação, como ilustra a Fig.~\ref{fig:polos}.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.78\columnwidth]{polos_zeros_b9.png}
+\caption{Diagrama de polos e zeros do filtro Chebyshev~II de ordem~3.}
+\label{fig:polos}
+\end{figure}
+
+\subsection{Resposta em Frequência e Espectro}
+A Fig.~\ref{fig:resposta} apresenta as respostas em magnitude dos melhores
+filtros. O Chebyshev~II exibe o característico \emph{notch} de transmissão na
+banda de rejeição, atenuando seletivamente o ruído de alta frequência enquanto
+preserva a planura na banda de passagem. A Fig.~\ref{fig:espectro} confirma, no
+domínio da frequência, a supressão das componentes de alta frequência e a
+preservação da fundamental e das harmônicas de baixa ordem.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{resposta_frequencia_b9.png}
+\caption{Resposta em frequência (magnitude) dos melhores filtros.}
+\label{fig:resposta}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{espectro_fft_b9.png}
+\caption{Espectro de magnitude (FFT) antes e depois da filtragem.}
+\label{fig:espectro}
+\end{figure}
+
+\subsection{Custo Computacional \emph{versus} Ordem}
+A Tabela~\ref{tab:custo} e a Fig.~\ref{fig:custo} relacionam ordem, RMSE, custo e
+módulo do polo dominante, fixando o tipo Chebyshev~II e $f_c=\SI{2300}{\hertz}$. A
+ordem~1 é insuficiente (RMSE elevado e polo próximo do círculo unitário,
+$|p|=\num{0.973}$). O RMSE atinge o mínimo na \textbf{ordem~3} e
+\emph{aumenta} para ordens superiores, ao passo que o custo computacional cresce
+de forma aproximadamente monotônica. Conclui-se que a ordem~3 é o ponto ótimo:
+ordens maiores apenas elevam o custo sem benefício de qualidade, exatamente o
+compromisso que o enunciado pede para considerar.
+
+\begin{table}[!t]
+\caption{Custo computacional \emph{versus} ordem (Chebyshev~II, $f_c=2300$~Hz, fase zero)}
+\label{tab:custo}
+\centering
+\begin{tabular}{cccc}
+\toprule
+Ordem & RMSE & $t$ (ms) & $|p|_{\max}$ \\
+\midrule
+1 & 15,165 & 1,05 & 0,973 \\
+2 & 0,872  & 1,29 & 0,764 \\
+\textbf{3} & \textbf{0,321} & 2,82 & 0,683 \\
+4 & 0,354  & 2,05 & 0,720 \\
+5 & 0,390  & 3,82 & 0,779 \\
+6 & 0,411  & 3,46 & 0,828 \\
+7 & 0,425  & 4,46 & 0,865 \\
+8 & 0,435  & 4,51 & 0,892 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{custo_vs_ordem_b9.png}
+\caption{RMSE e custo computacional em função da ordem do filtro.}
+\label{fig:custo}
+\end{figure}
+
+\subsection{Filtragem Causal \emph{versus} Fase Zero}
+Avaliou-se também o melhor filtro causal frente ao de fase zero. Enquanto a
+filtragem de fase zero atinge RMSE de \num{0.3207}, o melhor filtro causal
+limita-se a \num{0.5630} (pouca melhora frente ao sinal bruto, \num{0.5961}), por
+conta do atraso de fase, que desalinha o sinal filtrado em relação à referência.
+Confirma-se que, para a tarefa \emph{offline} de minimização do RMSE, a filtragem
+de fase zero é claramente superior; a opção causal permanece relevante caso se
+exija operação em tempo real no medidor.
+
+\section{Conclusão}
+\label{sec:conclusao}
+Projetaram-se e avaliaram-se filtros IIR para a atenuação do ruído de medição no
+sinal de corrente do Grupo~B9. A metodologia adotada, baseada em realização em
+SOS, busca em grade com verificação de estabilidade e avaliação conjunta de
+RMSE, ganho de SNR e custo computacional, conduziu a um filtro \textbf{Chebyshev tipo~II de
+ordem~3} com $f_c=\SI{2300}{\hertz}$, que reduziu o RMSE de \num{0.5961} para
+\num{0.3207} (\SI{46.2}{\percent}) com ganho de SNR de
+\SI{5.4}{\decibel}. A análise de custo \emph{versus} ordem demonstrou que
+ordens superiores a~3 não melhoram a qualidade, apenas o custo, e a comparação
+causal \emph{versus} fase zero evidenciou a superioridade da filtragem de fase
+zero para o processamento \emph{offline}. A função de filtragem foi implementada
+de forma genérica, aplicável a sinais de qualquer comprimento, atendendo aos
+requisitos do projeto.
+
+\begin{thebibliography}{1}
+\bibitem{oppenheim}
+A.~V. Oppenheim and R.~W. Schafer, \emph{Discrete-Time Signal Processing},
+3rd~ed. Upper Saddle River, NJ: Prentice Hall, 2009.
+
+\bibitem{proakis}
+J.~G. Proakis and D.~G. Manolakis, \emph{Digital Signal Processing: Principles,
+Algorithms, and Applications}, 4th~ed. Upper Saddle River, NJ: Prentice Hall,
+2007.
+
+\bibitem{scipy}
+P.~Virtanen \emph{et al.}, ``SciPy 1.0: fundamental algorithms for scientific
+computing in Python,'' \emph{Nature Methods}, vol.~17, pp.~261--272, 2020.
+
+\bibitem{gustafsson}
+F.~Gustafsson, ``Determining the initial states in forward-backward filtering,''
+\emph{IEEE Trans. Signal Process.}, vol.~44, no.~4, pp.~988--992, 1996.
+
+\bibitem{ieee519}
+\emph{IEEE Recommended Practice and Requirements for Harmonic Control in Electric
+Power Systems}, IEEE Std~519-2014, 2014.
+\end{thebibliography}
+
+\appendix
+
+\subsection{Declaração de Uso de IA Generativa}
+Em conformidade com as regras acadêmicas da disciplina, declara-se que este
+trabalho contou com o auxílio de um assistente de programação baseado em IA
+generativa na estruturação das rotinas em \texttt{scipy}, na geração das figuras e
+na redação deste relatório. A fundamentação teórica, a escolha dos parâmetros e a
+validação dos resultados foram conduzidas e revisadas pelos integrantes do
+Grupo~B9.
+
+\subsection{Código da Função de Filtragem}
+A Listagem~\ref{lst:codigo} reúne o núcleo da implementação: projeto em SOS,
+aplicação (fase zero ou causal), verificação de estabilidade e cálculo do RMSE. O
+código completo, incluindo a busca em grade e a geração das figuras, acompanha a
+entrega.
+
+\begin{lstlisting}[label=lst:codigo,caption={Núcleo da rotina de filtragem IIR.}]
+import numpy as np
+from scipy import signal
+
+def projetar_sos(tipo, ordem, Wn, rp=0.5, rs=40.0):
+    if tipo == 'butter':
+        return signal.butter(ordem, Wn, btype='low', output='sos')
+    if tipo == 'cheby1':
+        return signal.cheby1(ordem, rp, Wn, btype='low', output='sos')
+    if tipo == 'cheby2':
+        return signal.cheby2(ordem, rs, Wn, btype='low', output='sos')
+    if tipo == 'ellip':
+        return signal.ellip(ordem, rp, rs, Wn, btype='low', output='sos')
+    raise ValueError("Tipo invalido")
+
+def aplicar_filtro_iir(sinal, fs, f_corte, ordem, tipo='butter',
+                       rp=0.5, rs=40.0, fase_zero=True):
+    Wn = f_corte / (0.5 * fs)        # normaliza por Nyquist
+    sos = projetar_sos(tipo, ordem, Wn, rp, rs)
+    if fase_zero:
+        return signal.sosfiltfilt(sos, sinal), sos
+    return signal.sosfilt(sos, sinal), sos
+
+def eh_estavel(sos):
+    _, polos, _ = signal.sos2zpk(sos)
+    return np.all(np.abs(polos) < 1.0)
+
+def calcular_rmse(ref, filt):
+    return np.sqrt(np.mean((ref - filt) ** 2))
+\end{lstlisting}
+
+\end{document}
